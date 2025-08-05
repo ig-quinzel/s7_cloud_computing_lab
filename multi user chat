@@ -1,1 +1,151 @@
+#server
+import socket
+import threading
+
+clients = {} 
+clients_lock = threading.Lock()
+
+def broadcast(message, sender_socket):
+    with clients_lock:
+        for client_sock in clients:
+            try:
+                if sender_socket is None:
+                    client_sock.sendall(message.encode())
+                elif client_sock == sender_socket:
+                    client_sock.sendall(f"You: {message}".encode())
+                else:
+                    username = clients.get(sender_socket, "Unknown")
+                    client_sock.sendall(f"{username}: {message}".encode())
+            except:
+                client_sock.close()
+                remove_client(client_sock)
+
+
+def remove_client(client_sock):
+    with clients_lock:
+        if client_sock in clients:
+            print(f"[DISCONNECTED] {clients[client_sock]} from server.")
+            del clients[client_sock]
+
+def handle_client(client_sock, addr):
+    try:
+        username = client_sock.recv(1024).decode().strip()
+        if not username:
+            client_sock.close()
+            return
+
+        with clients_lock:
+            clients[client_sock] = username
+        print(f"[CONNECTED] {username} from {addr}")
+        broadcast(f"{username} joined the chat.", None)
+        while True:
+            message = client_sock.recv(1024)
+            if not message:
+                break
+            broadcast(message.decode(), client_sock)
+    except:
+        pass
+    finally:
+        remove_client(client_sock)
+        client_sock.close()
+
+def start_server(host='127.0.0.1', port=65432):
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((host, port))
+    server.listen()
+    print(f"[STARTED] Server listening on {host}:{port}")
+
+    while True:
+        client_sock, addr = server.accept()
+        threading.Thread(target=handle_client, args=(client_sock, addr), daemon=True).start()
+
+if __name__ == "__main__":
+    start_server()
+client
+import socket
+import threading
+import tkinter as tk
+from tkinter import simpledialog, scrolledtext, messagebox
+
+class ChatClient:
+    def __init__(self, host='127.0.0.1', port=65432):
+        self.root = tk.Tk()
+        self.root.title("TCP Multi-User Chat Client")
+
+        self.username = simpledialog.askstring("Username", "Enter your name", parent=self.root)
+        if not self.username:
+            messagebox.showerror("Error", "Username is required.")
+            self.root.destroy()
+            return
+
+        self.chat_area = scrolledtext.ScrolledText(self.root, state='disabled', width=60, height=20, wrap=tk.WORD)
+        self.chat_area.pack(padx=10, pady=10)
+
+        bottom_frame = tk.Frame(self.root)
+        bottom_frame.pack(padx=10, pady=(0, 10))
+
+        self.msg_entry = tk.Entry(bottom_frame, width=50)
+        self.msg_entry.pack(side=tk.LEFT, padx=(0, 10))
+        self.msg_entry.bind("<Return>", self.send_message)
+
+        self.send_button = tk.Button(bottom_frame, text="Send", command=self.send_message)
+        self.send_button.pack(side=tk.LEFT)
+
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            self.sock.connect((host, port))
+            self.sock.sendall(self.username.encode())  
+        except Exception as e:
+            messagebox.showerror("Connection Error", f"Could not connect: {e}")
+            self.root.destroy()
+            return
+
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+
+        threading.Thread(target=self.receive_messages, daemon=True).start()
+
+        self.root.mainloop()
+
+    def send_message(self, event=None):
+        message = self.msg_entry.get().strip()
+        if message:
+            try:
+                self.sock.sendall(message.encode())
+                self.msg_entry.delete(0, tk.END)
+            except Exception as e:
+                messagebox.showerror("Send Error", f"Failed to send: {e}")
+
+    def receive_messages(self):
+        while True:
+            try:
+                message = self.sock.recv(1024).decode()
+                if not message:
+                    break
+
+                if message.startswith(f"{self.username}:"):
+                    message = message.replace(f"{self.username}:", "You:", 1)
+
+                self.display_message(message)
+            except:
+                break
+        self.sock.close()
+        self.display_message("Disconnected from server.")
+
+    def display_message(self, message):
+        def append():
+            self.chat_area.config(state='normal')
+            self.chat_area.insert(tk.END, message + "\n")
+            self.chat_area.config(state='disabled')
+            self.chat_area.yview(tk.END)
+        self.root.after(0, append)
+
+    def close(self):
+        try:
+            self.sock.close()
+        except:
+            pass
+        self.root.destroy()
+
+if __name__ == "__main__":
+    ChatClient()
 
